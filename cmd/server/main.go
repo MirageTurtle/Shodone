@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,8 +13,18 @@ import (
 
 func main() {
 	// Initialize logger
-	logger := log.New(os.Stdout, "[shodone] ", log.LstdFlags)
-	logger.Println("Starting API proxy service")
+	logger := log.New()
+	logger.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
+	logger.SetOutput(os.Stdout)
+	// Set log level, first try to parse from environment
+	if level, err := log.ParseLevel(os.Getenv("SHODONE_LOG_LEVEL")); err == nil {
+		logger.SetLevel(level)
+	} else {
+		logger.SetLevel(log.InfoLevel)
+		logger.Warn("Invalid log level, defaulting to info")
+	}
 
 	// Load configuration
 	cfg, err := config.New()
@@ -42,9 +52,9 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Println("Shutting down server...")
+	logger.Info("Shutting down server...")
 	if err := server.Stop(); err != nil {
 		logger.Fatalf("Server shutdown failed: %v", err)
 	}
-	logger.Println("Server stopped")
+	logger.Info("Server stopped")
 }

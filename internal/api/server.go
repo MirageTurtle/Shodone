@@ -4,8 +4,8 @@ import (
 	"context"
 	// "encoding/json"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -87,7 +87,7 @@ func (s *Server) Start() error {
 		Handler: s.router,
 	}
 
-	s.logger.Printf("Server listening on %s", addr)
+	s.logger.Infof("Starting server on %s", addr)
 	return s.server.ListenAndServe()
 }
 
@@ -136,7 +136,7 @@ func (s *Server) setAPIHost(c *gin.Context) {
 func (s *Server) getAllAPIKeys(c *gin.Context) {
 	keys, err := s.db.GetAllAPIKeys()
 	if err != nil {
-		s.logger.Printf("Failed to get API keys: %v", err)
+		s.logger.Errorf("Failed to get API keys: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API keys"})
 		return
 	}
@@ -160,7 +160,7 @@ func (s *Server) getAPIKey(c *gin.Context) {
 
 	key, err := s.db.GetAPIKey(id)
 	if err != nil {
-		s.logger.Printf("Failed to get API key %d: %v", id, err)
+		s.logger.Errorf("Failed to get API key %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
 		return
 	}
@@ -201,14 +201,14 @@ func (s *Server) addAPIKey(c *gin.Context) {
 	// Add the API key
 	id, err := s.db.AddAPIKey(req.Key, req.QuotaLimit, req.RefreshesAt)
 	if err != nil {
-		s.logger.Printf("Failed to add API key: %v", err)
+		s.logger.Errorf("Failed to add API key: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add API key"})
 		return
 	}
 
 	key, err := s.db.GetAPIKey(id)
 	if err != nil {
-		s.logger.Printf("Failed to get added API key: %v", err)
+		s.logger.Errorf("Failed to get added API key: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve added API key"})
 		return
 	}
@@ -229,7 +229,7 @@ func (s *Server) deleteAPIKey(c *gin.Context) {
 	}
 
 	if err := s.db.DeleteAPIKey(id); err != nil {
-		s.logger.Printf("Failed to delete API key %d: %v", id, err)
+		s.logger.Errorf("Failed to delete API key %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete API key"})
 		return
 	}
@@ -252,7 +252,6 @@ func (s *Server) updateAPIKey(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		s.logger.Printf("Failed to bind JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -260,7 +259,7 @@ func (s *Server) updateAPIKey(c *gin.Context) {
 	// Get current key
 	key, err := s.db.GetAPIKey(id)
 	if err != nil {
-		s.logger.Printf("Failed to get API key %d: %v", id, err)
+		s.logger.Errorf("Failed to get API key %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
 		return
 	}
@@ -268,7 +267,7 @@ func (s *Server) updateAPIKey(c *gin.Context) {
 	// Update fields if provided
 	if req.IsActive != nil {
 		if err := s.db.UpdateAPIKeyStatus(id, *req.IsActive, key.ErrorCount); err != nil {
-			s.logger.Printf("Failed to update API key status: %v", err)
+			s.logger.Errorf("Failed to update API key status: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update API key"})
 			return
 		}
@@ -303,12 +302,12 @@ func (s *Server) refreshAPIKey(c *gin.Context) {
 	// Get key
 	key, err := s.db.GetAPIKey(id)
 	if err != nil {
-		s.logger.Printf("Failed to get API key %d: %v", id, err)
+		s.logger.Errorf("Failed to get API key %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
 		return
 	}
 	if err := s.refreshSingleAPIKey(key); err != nil {
-		s.logger.Printf("Failed to refresh API key %d: %v", id, err)
+		s.logger.Errorf("Failed to refresh API key %d: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh API key"})
 		return
 	}
@@ -319,7 +318,7 @@ func (s *Server) refreshAPIKey(c *gin.Context) {
 func (s *Server) refreshAPIKeys(c *gin.Context) {
 	keys, err := s.db.GetAllAPIKeys()
 	if err != nil {
-		s.logger.Printf("Failed to get API keys: %v", err)
+		s.logger.Errorf("Failed to get API keys: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API keys"})
 		return
 	}
@@ -327,7 +326,7 @@ func (s *Server) refreshAPIKeys(c *gin.Context) {
 	var updatedCount int
 	for _, key := range keys {
 		if err := s.refreshSingleAPIKey(key); err != nil {
-			s.logger.Printf("Failed to refresh API key %d: %v", key.ID, err)
+			s.logger.Errorf("Failed to refresh API key %d: %v", key.ID, err)
 			continue
 		}
 		updatedCount++
@@ -341,37 +340,48 @@ func (s *Server) refreshAPIKeys(c *gin.Context) {
 
 // proxyRequest proxies a request to the configured API
 func (s *Server) proxyRequest(c *gin.Context) {
-	// Extract path from URL
+	// Extract path and query parameters from the request
 	path := c.Param("path")
+	query := c.Request.URL.Query()
 
 	// Get an available API key
 	s.keyMutex.Lock()
 	key, err := s.db.GetAvailableAPIKey()
 	if err != nil {
 		s.keyMutex.Unlock()
-		s.logger.Printf("Failed to get available API key: %v", err)
+		s.logger.Errorf("Failed to get available API key: %v", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "No available API keys"})
 		return
 	}
 
 	// Increment usage before making the request
 	// This prevents simultaneous requests from exceeding quota
+	// By default, cost_per_request is 0
+	// because only part of queries will increment the quota used
 	if err := s.db.IncrementAPIKeyUsage(key.ID, s.cfg.CostPerRequest); err != nil {
 		s.keyMutex.Unlock()
-		s.logger.Printf("Failed to update API key usage: %v", err)
+		s.logger.Errorf("Failed to increment API key usage: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update API key usage"})
 		return
 	}
 	s.keyMutex.Unlock()
 
 	// Forward the request to the API
-	resp, err := s.client.Do(c.Request.Method, path, c.Request.Body, key.Key)
+	// And log the forwarded request for debug
+	s.logger.Debugf("Forwarding request to %s with key %s", path, maskAPIKey(key.Key))
+	s.logger.Debugf("URL: %s", c.Request.URL)
+	s.logger.Debugf("Method: %s", c.Request.Method)
+	s.logger.Debugf("Headers: %v", c.Request.Header)
+	s.logger.Debugf("Body: %v", c.Request.Body)
+	s.logger.Debugf("Params: %v", c.Request.URL.Query())
+	s.logger.Debugf("Path: %s", path)
+	resp, err := s.client.Do(c.Request.Method, path, c.Request.Body, key.Key, query)
 	if err != nil {
-		s.logger.Printf("API request failed: %v", err)
+		s.logger.Errorf("API request failed: %v", err)
 
 		// If the request failed, try to restore the quota (optional)
 		if updateErr := s.db.IncrementAPIKeyUsage(key.ID, -s.cfg.CostPerRequest); updateErr != nil {
-			s.logger.Printf("Failed to restore API key usage: %v", updateErr)
+			s.logger.Errorf("Failed to restore API key usage: %v", updateErr)
 		}
 
 		c.JSON(http.StatusBadGateway, gin.H{"error": "Failed to reach API"})
@@ -383,7 +393,7 @@ func (s *Server) proxyRequest(c *gin.Context) {
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		// Update key status
 		if err := s.db.UpdateAPIKeyStatus(key.ID, false, key.ErrorCount+1); err != nil {
-			s.logger.Printf("Failed to update API key status: %v", err)
+			s.logger.Errorf("Failed to update API key status: %v", err)
 		}
 	}
 
