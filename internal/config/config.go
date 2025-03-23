@@ -10,7 +10,8 @@ import (
 // Config holds the application configuration
 type Config struct {
 	// Server configuration
-	Port int `json:"port"`
+	Host string `json:"host"`
+	Port int    `json:"port"`
 
 	// API configuration
 	APIHost string `json:"api_host"`
@@ -25,6 +26,7 @@ type Config struct {
 
 // Default configuration values
 const (
+	DefaultHost           = "localhost"
 	DefaultPort           = 8080
 	DefaultAPIHost        = "https://api.shodan.io"
 	DefaultDatabaseDir    = "./data"
@@ -36,6 +38,7 @@ const (
 func New() (*Config, error) {
 	// Set default configuration
 	cfg := &Config{
+		Host:              DefaultHost,
 		Port:              DefaultPort,
 		APIHost:           DefaultAPIHost,
 		DatabasePath:      filepath.Join(DefaultDatabaseDir, "proxy.db"),

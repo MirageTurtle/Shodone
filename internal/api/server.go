@@ -36,7 +36,7 @@ func NewServer(cfg *config.Config, db *storage.DB, logger *log.Logger) *Server {
 
 	// Create server
 	server := &Server{
-		router:   gin.Default(),
+		router:   gin.New(),
 		client:   apiClient,
 		db:       db,
 		cfg:      cfg,
@@ -81,7 +81,8 @@ func (s *Server) setupRoutes() {
 
 // Start starts the API server
 func (s *Server) Start() error {
-	addr := fmt.Sprintf(":%d", s.cfg.Port)
+	// Start server
+	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	s.server = &http.Server{
 		Addr:    addr,
 		Handler: s.router,

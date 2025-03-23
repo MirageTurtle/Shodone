@@ -1,0 +1,8 @@
+{
+  "host": "localhost",
+  "port": 8080,
+  "api_host": "https://api.shodan.io",
+  "database_path": "data/proxy.db",
+  "default_quota_limit": 100,
+  "cost_per_request": 0
+}

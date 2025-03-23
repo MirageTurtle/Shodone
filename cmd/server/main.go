@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"os/signal"
@@ -24,6 +25,13 @@ func main() {
 	} else {
 		logger.SetLevel(log.InfoLevel)
 		logger.Warn("Invalid log level, defaulting to info")
+	}
+
+	// Set GIN mode, first try to parse from environment
+	if mode := os.Getenv("GIN_MODE"); mode != "" {
+		gin.SetMode(mode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
 	}
 
 	// Load configuration
