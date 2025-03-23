@@ -1,6 +1,6 @@
 * Shodone
 
-Let's use *Shod*an in *one*.
+Let's use *Shod*​an in *one*.
 
 Shodone could help you to manage your [shodan](https://shodan.io/) API Keys, and to forward your search request.
 
