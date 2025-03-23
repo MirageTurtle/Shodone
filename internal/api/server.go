@@ -189,9 +189,13 @@ func (s *Server) addAPIKey(c *gin.Context) {
 		req.QuotaLimit = s.cfg.DefaultQuotaLimit
 	}
 
-	// If refresh date is not provided, set to one month from now
+	// If refresh date is not provided, set to default value (1st of next month)
 	if req.RefreshesAt.IsZero() {
-		req.RefreshesAt = time.Now().AddDate(0, 1, 0)
+		currentDate := time.Now()
+		req.RefreshesAt = time.Date(
+			currentDate.Year(), currentDate.Month(), 1, 0, 0, 0, 0, time.UTC,
+		).AddDate(0, 1, 0)
+		req.RefreshesAt = req.RefreshesAt.UTC()
 	}
 
 	// Add the API key
@@ -234,6 +238,7 @@ func (s *Server) deleteAPIKey(c *gin.Context) {
 }
 
 // updateAPIKey updates an API key
+// Only update is_active field for now
 func (s *Server) updateAPIKey(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
@@ -243,13 +248,11 @@ func (s *Server) updateAPIKey(c *gin.Context) {
 	}
 
 	var req struct {
-		IsActive   *bool  `json:"is_active"`
-		QuotaLimit *int   `json:"quota_limit"`
-		QuotaUsed  *int   `json:"quota_used"`
-		Key        string `json:"key"`
+		IsActive *bool `json:"is_active"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
+		s.logger.Printf("Failed to bind JSON: %v", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -270,10 +273,45 @@ func (s *Server) updateAPIKey(c *gin.Context) {
 			return
 		}
 	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
-	// Update other fields as needed
-	// This is simplified - you might want to add more comprehensive update logic
+// refreshSingleAPIKey refreshes one key
+// this is a helper function to refreshAPIKey and refreshAPIKeys
+func (s *Server) refreshSingleAPIKey(key *storage.APIKey) error {
+	// Check if key is valid and get remaining quota
+	isValid, remainingQuota, err := s.client.CheckAPIKey(key.Key)
+	if err != nil {
+		return fmt.Errorf("failed to check API key %d: %v", key.ID, err)
+	}
+	s.db.UpdateAPIKeyUsage(key.ID, key.QuotaLimit-remainingQuota)
+	if key.IsActive != isValid {
+		if err := s.db.UpdateAPIKeyStatus(key.ID, isValid, key.ErrorCount+1); err != nil {
+			return fmt.Errorf("failed to update API key status: %v", err)
+		}
+	}
+	return nil
+}
 
+func (s *Server) refreshAPIKey(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid key ID"})
+		return
+	}
+	// Get key
+	key, err := s.db.GetAPIKey(id)
+	if err != nil {
+		s.logger.Printf("Failed to get API key %d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get API key"})
+		return
+	}
+	if err := s.refreshSingleAPIKey(key); err != nil {
+		s.logger.Printf("Failed to refresh API key %d: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to refresh API key"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
@@ -288,45 +326,12 @@ func (s *Server) refreshAPIKeys(c *gin.Context) {
 
 	var updatedCount int
 	for _, key := range keys {
-		// Check if key is valid and get remaining quota
-		isValid, remainingQuota, err := s.client.CheckAPIKey(key.Key)
-		if err != nil {
-			s.logger.Printf("Failed to check API key %d: %v", key.ID, err)
+		if err := s.refreshSingleAPIKey(key); err != nil {
+			s.logger.Printf("Failed to refresh API key %d: %v", key.ID, err)
 			continue
 		}
-		// Update quota used
-		// ...
-
-		// Update key status
-		if !isValid && key.IsActive {
-			if err := s.db.UpdateAPIKeyStatus(key.ID, false, key.ErrorCount+1); err != nil {
-				s.logger.Printf("Failed to update API key status: %v", err)
-				continue
-			}
-			updatedCount++
-		} else if isValid && !key.IsActive {
-			if err := s.db.UpdateAPIKeyStatus(key.ID, true, 0); err != nil {
-				s.logger.Printf("Failed to update API key status: %v", err)
-				continue
-			}
-			updatedCount++
-		}
-
-		// Update quota if needed (this would depend on your API behavior)
-		// This is just an example - you might need to customize this logic
-		if isValid && remainingQuota > 0 && key.QuotaLimit != remainingQuota {
-			// In this example, we're assuming the API tells us the total remaining quota
-			// You might need to adjust this based on your API's response
-			quotaUsed := key.QuotaLimit - remainingQuota
-			// Update quota used
-			// This is simplified - you might need more complex logic
-			if err := s.db.UpdateAPIKeyUsage(key.ID, quotaUsed); err != nil {
-				s.logger.Printf("Failed to update API key usage: %v", err)
-				continue
-			}
-		}
+		updatedCount++
 	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"status":       "ok",
 		"total_keys":   len(keys),
@@ -351,7 +356,7 @@ func (s *Server) proxyRequest(c *gin.Context) {
 
 	// Increment usage before making the request
 	// This prevents simultaneous requests from exceeding quota
-	if err := s.db.UpdateAPIKeyUsage(key.ID, s.cfg.CostPerRequest); err != nil {
+	if err := s.db.IncrementAPIKeyUsage(key.ID, s.cfg.CostPerRequest); err != nil {
 		s.keyMutex.Unlock()
 		s.logger.Printf("Failed to update API key usage: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update API key usage"})
@@ -365,7 +370,7 @@ func (s *Server) proxyRequest(c *gin.Context) {
 		s.logger.Printf("API request failed: %v", err)
 
 		// If the request failed, try to restore the quota (optional)
-		if updateErr := s.db.UpdateAPIKeyUsage(key.ID, -s.cfg.CostPerRequest); updateErr != nil {
+		if updateErr := s.db.IncrementAPIKeyUsage(key.ID, -s.cfg.CostPerRequest); updateErr != nil {
 			s.logger.Printf("Failed to restore API key usage: %v", updateErr)
 		}
 

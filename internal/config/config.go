@@ -26,10 +26,10 @@ type Config struct {
 // Default configuration values
 const (
 	DefaultPort           = 8080
-	DefaultAPIHost        = "https://api.example.com"
+	DefaultAPIHost        = "https://api.shodan.io"
 	DefaultDatabaseDir    = "./data"
-	DefaultQuotaLimit     = 1000
-	DefaultCostPerRequest = 1
+	DefaultQuotaLimit     = 100
+	DefaultCostPerRequest = 0
 )
 
 // New creates a new configuration

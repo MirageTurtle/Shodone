@@ -67,19 +67,8 @@ func (d *DB) Close() error {
 
 // initSchema initializes the database schema
 func initSchema(db *sql.DB) error {
-	// Create config table if it doesn't exist
-	_, err := db.Exec(`
-		CREATE TABLE IF NOT EXISTS config (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-	`)
-	if err != nil {
-		return err
-	}
-
 	// Create API keys table
-	_, err = db.Exec(`
+	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS api_keys (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			key TEXT UNIQUE NOT NULL,
@@ -110,25 +99,6 @@ func initSchema(db *sql.DB) error {
 		);
 	`)
 	return err
-}
-
-// SetConfig sets a configuration value in the database
-func (d *DB) SetConfig(key, value string) error {
-	_, err := d.db.Exec(
-		"INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
-		key, value, value,
-	)
-	return err
-}
-
-// GetConfig gets a configuration value from the database
-func (d *DB) GetConfig(key string) (string, error) {
-	var value string
-	err := d.db.QueryRow("SELECT value FROM config WHERE key = ?", key).Scan(&value)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	return value, err
 }
 
 // AddAPIKey adds a new API key to the database
@@ -275,8 +245,11 @@ func (d *DB) GetAvailableAPIKey() (*APIKey, error) {
 	// Check if quota should be reset
 	currentTime := time.Now()
 	if key.RefreshesAt.Before(currentTime) && !key.RefreshesAt.IsZero() {
-		// Calculate next refresh time (assuming monthly)
-		nextRefresh := key.RefreshesAt.AddDate(0, 1, 0)
+		// Calculate next refresh time (default 1st of every month)
+		// Use UTC to avoid some potential issues
+		nextRefresh := time.Date(
+			currentTime.Year(), currentTime.Month(), 1, 0, 0, 0, 0, time.UTC,
+		).AddDate(0, 1, 0)
 
 		// Reset quota and update refresh time
 		_, err := d.db.Exec(
@@ -294,11 +267,20 @@ func (d *DB) GetAvailableAPIKey() (*APIKey, error) {
 	return &key, nil
 }
 
-// UpdateAPIKeyUsage increments the quota usage for a key
-func (d *DB) UpdateAPIKeyUsage(id int, incrementQuota int) error {
+// IncrementAPIKeyUsage increments the quota used by an API key
+func (d *DB) IncrementAPIKeyUsage(id int, incrementQuota int) error {
 	_, err := d.db.Exec(
 		"UPDATE api_keys SET quota_used = quota_used + ?, last_used = CURRENT_TIMESTAMP WHERE id = ?",
 		incrementQuota, id,
+	)
+	return err
+}
+
+// UpdateAPIKeyUsage updates the quota used by an API key
+func (d *DB) UpdateAPIKeyUsage(id int, quotaUsed int) error {
+	_, err := d.db.Exec(
+		"UPDATE api_keys SET quota_used = ?, last_used = CURRENT_TIMESTAMP WHERE id = ?",
+		quotaUsed, id,
 	)
 	return err
 }
